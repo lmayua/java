@@ -53,4 +53,14 @@ public interface IElasticSearchService {
      * @return
      */
     public boolean deleteIndex(String ...indices);
+    
+    /**
+     * 删除指定Index的多个Type的数据
+     *
+     * @param index 索引
+     * @param sourceJson 删除条件，e.g:全部删除-->"{\"query\": {\"match_all\": {}}}"
+     * @param types 一个或者多个类型
+     * @return
+     */
+    public boolean deleteType(String index, String sourceJson, String ...types);
 }

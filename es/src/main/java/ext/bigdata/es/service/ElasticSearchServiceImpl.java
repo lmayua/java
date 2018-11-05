@@ -5,6 +5,9 @@ import java.net.UnknownHostException;
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
 import org.elasticsearch.action.delete.DeleteResponse;
+import org.elasticsearch.action.deletebyquery.DeleteByQueryAction;
+import org.elasticsearch.action.deletebyquery.DeleteByQueryRequestBuilder;
+import org.elasticsearch.action.deletebyquery.DeleteByQueryResponse;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
@@ -54,6 +57,7 @@ public class ElasticSearchServiceImpl extends AbstractEsService {
                         .setFrom(fromSize)
                         .setSize(querySize)
                         //.addAggregation(AggregationBuilders.)
+                        //.addSort(SortBuilders.)
                         .setSearchType(SearchType.QUERY_THEN_FETCH)
                         .get(TimeValue.timeValueMillis(QUERY_DEFAULT_TIMEOUT))
                         ;
@@ -79,5 +83,16 @@ public class ElasticSearchServiceImpl extends AbstractEsService {
             }
         }
         return isSuccess;
+    }
+    
+    @Override
+    public boolean deleteType(String index, String sourceJson, String ...types) {
+        DeleteByQueryResponse dbqr = new DeleteByQueryRequestBuilder(client, DeleteByQueryAction.INSTANCE)
+                                         .setIndices(index)
+                                         .setTypes(types)
+                                         .setSource(sourceJson)
+                                         .get();
+        System.out.println(dbqr);
+        return true;
     }
 }
