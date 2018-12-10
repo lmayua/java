@@ -1,5 +1,7 @@
 package ext.ftp;
 
+import java.util.Objects;
+
 /**
  * FTP客户端配置信息类
  */
@@ -72,6 +74,37 @@ public class FTPClientConfiguration {
     }
     /** get & set method end */
 
+    @Override
+    public int hashCode() {
+        return Objects.hashCode(this.hostName) ^ Objects.hashCode(this.port) ^ Objects.hashCode(this.userName)
+                ^ Objects.hash(this.password);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+
+        if (null == obj) {
+            return false;
+        }
+
+        if (this == obj) {
+            return true;
+        }
+
+        if (obj instanceof FTPClientConfiguration) {
+            FTPClientConfiguration conf = (FTPClientConfiguration) obj;
+            String confHostName = conf.getHostName();
+            int confPort = conf.getPort();
+            String confUserName = conf.getUserName();
+            String confPassword = conf.getPassword();
+
+            return (null != confHostName) && confHostName.equals(this.hostName) && confPort == this.port
+                    && null != confUserName && confUserName.equals(this.userName) && null != confPassword
+                    && confPassword.equals(this.password);
+        }
+        return false;
+    }
+    
     @Override
     public String toString() {
         StringBuilder builder = new StringBuilder();

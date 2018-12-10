@@ -6,7 +6,7 @@ import org.apache.commons.net.ftp.FTPClient;
 
 public class Test {
     public static void main(String[] args) throws IOException {
-        FTPClientPool pool = new FTPClientPool();
+        FTPClientPool pool = FTPClientPool.getInstance();
 
         FTPClientConfiguration conf = new FTPClientConfiguration();
         conf.setHostName("");

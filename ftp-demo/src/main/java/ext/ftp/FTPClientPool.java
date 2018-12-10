@@ -2,6 +2,7 @@ package ext.ftp;
 
 import java.io.IOException;
 import java.text.MessageFormat;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -28,19 +29,41 @@ public class FTPClientPool {
     /**
      * FTPClient对象池
      */
-    private GenericObjectPool<FTPClient> pool;
+    //private GenericObjectPool<FTPClient> pool;
+    
+    /**
+     * 
+     */
+    private ConcurrentHashMap<FTPClientConfiguration, GenericObjectPool<FTPClient>> poolMap;
 
     /**
      * FTPClient配置信息类
      */
-    protected FTPClientConfiguration ftpConf;
+    //protected FTPClientConfiguration ftpConf;
+    
+    /**
+     * 单例对象
+     */
+    private static FTPClientPool instance;
 
     /**
      * <default constructor>
      */
-    public FTPClientPool() {
-        this.pool = new GenericObjectPool<FTPClient>(new FTPClientPoolFactory(),
-                new GenericObjectPoolConfig<FTPClient>());
+    private FTPClientPool() {
+        //this.pool = new GenericObjectPool<FTPClient>(new FTPClientPoolFactory(), new GenericObjectPoolConfig<FTPClient>());
+        this.poolMap = new ConcurrentHashMap<>();
+    }
+    
+    /**
+     * 获取FTP客户端池
+     *
+     * @return FTPClientPool FTP客户端池对象
+     */
+    public static FTPClientPool getInstance(){
+        if (null == instance){
+            instance = new FTPClientPool();
+        }
+        return instance;
     }
 
     /**
@@ -50,9 +73,54 @@ public class FTPClientPool {
      * @return
      * @throws Exception
      */
-    public FTPClient borrowFtpClient(FTPClientConfiguration ftpClientConf) throws Exception {
-        this.ftpConf = ftpClientConf;
-        return pool.borrowObject();
+    public synchronized FTPClient borrowFtpClient(FTPClientConfiguration ftpClientConf) throws Exception {
+        GenericObjectPool<FTPClient> pool = null;
+        if (poolMap.containsKey(ftpClientConf)){
+            pool = poolMap.get(ftpClientConf);
+        } else {
+            pool = new GenericObjectPool<>(new FTPClientPoolFactory(ftpClientConf), new GenericObjectPoolConfig<FTPClient>());
+            poolMap.put(ftpClientConf, pool);
+        }
+        
+        return borrowFtpClient(pool);
+    }
+    
+    /**
+     * 获取可用FTP连接
+     *
+     * @return
+     * @throws Exception
+     */
+    private FTPClient borrowFtpClient(GenericObjectPool<FTPClient> pool) throws Exception {
+        FTPClient ftpClient = pool.borrowObject();
+        LOG.info(MessageFormat.format("连接池有{0}活动连接，有{1}空闲连接，有{2}借出连接，有{3}归还连接，FTP客户端内存地址:{4}", pool.getNumActive(),
+                pool.getNumIdle(), pool.getBorrowedCount(), pool.getReturnedCount(), ftpClient.toString()));
+        // 校验联通性，如果连接不上销毁对象重新创建
+        if (!checkConnect(ftpClient)) {
+            pool.invalidateObject(ftpClient);
+            ftpClient = this.borrowFtpClient(pool);
+        }
+
+        return ftpClient;
+    }
+
+    /**
+     * 校验FTP是否联通
+     *
+     * @param ftpClient FTP客户端
+     * @return
+     */
+    private boolean checkConnect(FTPClient ftpClient) {
+        boolean isConnect = false;
+        try {
+            isConnect = ftpClient.sendNoOp();
+            LOG.info("判断是否连接："+ isConnect);
+        } catch (FTPConnectionClosedException e) {
+            LOG.error("校验FTP连接发生FTPConnectionClosedException", e);
+        } catch (IOException e) {
+            LOG.error("校验FTP连接发生IOException", e);
+        }
+        return isConnect;
     }
 
     /**
@@ -60,15 +128,23 @@ public class FTPClientPool {
      * 
      * @param ftpClient FTP客户端
      */
-    public void returnFtpClient(FTPClient ftpClient) {
-        pool.returnObject(ftpClient);
+    public void returnFtpClient(FTPClient ftpClient, FTPClientConfiguration ftpConf) {
+        if (poolMap.containsKey(ftpConf)){
+            GenericObjectPool<FTPClient> pool = poolMap.get(ftpConf);
+            pool.returnObject(ftpClient);
+        }
     }
 
     /**
      * FTP客户端池工厂
      */
     class FTPClientPoolFactory extends BasePooledObjectFactory<FTPClient> {
-
+        FTPClientConfiguration ftpConf;
+        
+        public FTPClientPoolFactory(FTPClientConfiguration ftpConf) {
+            this.ftpConf = ftpConf;
+        }
+        
         @Override
         public FTPClient create() throws Exception {
             FTPClient ftpClient = new FTPClient();
@@ -92,7 +168,7 @@ public class FTPClientPool {
                 ftpClient.configure(conf);*/
 
                 ftpClient.enterLocalPassiveMode(); // 防止假卡死
-                ftpClient.setRemoteVerificationEnabled(false); // 是否远程校验连接的主机和控制的主机是否相同
+                ftpClient.setRemoteVerificationEnabled(false);
                 ftpClient.setConnectTimeout(10 * 1000); // 登录十秒超时
                 ftpClient.setDataTimeout(1 * 60 * 1000); // 获取数据超时 一分钟
                 ftpClient.setReceiveBufferSize(1024 * 1024);
@@ -112,19 +188,25 @@ public class FTPClientPool {
 
         @Override
         public void destroyObject(PooledObject<FTPClient> p) throws Exception {
+            LOG.info("开始销毁对象");
             FTPClient ftpClient = p.getObject();
-            ftpClient.logout();
-            ftpClient.disconnect();
+            try {
+                ftpClient.logout();
+                ftpClient.disconnect();
+            } catch (Exception e) {
+                LOG.error("销毁对象失败，异常\n", e);
+            }
             super.destroyObject(p);
         }
 
         @Override
         public boolean validateObject(PooledObject<FTPClient> p) {
-
+            LOG.info("校验对象开始");
             FTPClient ftpClient = p.getObject();
             boolean isConnect = false;
             try {
                 isConnect = ftpClient.sendNoOp();
+                LOG.info("判断是否连接："+ isConnect);
             } catch (FTPConnectionClosedException e) {
                 LOG.error("校验FTP连接发生FTPConnectionClosedException", e);
             } catch (IOException e) {
@@ -168,54 +250,4 @@ public class FTPClientPool {
         public static final int DEFAULT_MIN_IDLE = 2;
 
     }
-
-    /*private static void testShow(FTPClient ftpClient, String path) {
-        try {
-            ftpClient.changeWorkingDirectory(path);
-            for (String fileName : ftpClient.listNames()) {
-                System.out.println(fileName);
-            }
-    
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-    
-    public static void main(String[] args) {
-    
-        FTPClientPool pool = new FTPClientPool();
-        FTPClientConfiguration ftpConf1 = new FTPClientConfiguration();
-        ftpConf1.setHostName("10.27.97.65");
-        ftpConf1.setPort(21);
-        ftpConf1.setUserName("ftp_erp_w");
-        ftpConf1.setPassword("ftp_erp_w");
-        ftpConf1.setControlEncoding("utf-8");
-    
-        FTPClientConfiguration ftpConf2 = new FTPClientConfiguration();
-        ftpConf2.setHostName("ossftpsit.cnsuning.com");
-        ftpConf2.setPort(21);
-        ftpConf2.setUserName("saposs/r3/saposs");
-        ftpConf2.setPassword("Sn@12345");
-        ftpConf2.setControlEncoding("utf-8");
-    
-        FTPClient ftpClient1 = null;
-        FTPClient ftpClient2 = null;
-        try {
-            ftpClient1 = pool.borrowFtpClient(ftpConf1);
-            ftpClient2 = pool.borrowFtpClient(ftpConf2);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    
-        System.out.println("\nclient1 --->");
-        testShow(ftpClient1, "/test");
-        System.out.println("\nclient2 --->");
-        testShow(ftpClient2, "20181115");
-        System.out.println("\nclient1 --->");
-        testShow(ftpClient1, "/test");
-    
-        pool.returnFtpClient(ftpClient1);
-        System.out.println("\nreturn client1 --->");
-        testShow(ftpClient1, "/poispider");
-    }*/
 }
